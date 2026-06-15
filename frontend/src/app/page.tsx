@@ -60,6 +60,13 @@ export default function AgentDashboard() {
   const socketRef = useRef<WebSocket | null>(null);
   const terminalEndRef = useRef<HTMLDivElement | null>(null);
 
+  // ── DYNAMIC BACKEND CONFIGURATION ──
+  const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+  const cleanHost = rawApiUrl.replace(/^https?:\/\//, "");
+  
+  const HTTP_BASE_URL = rawApiUrl;
+  const WS_BASE_URL = rawApiUrl.startsWith("https") ? `wss://${cleanHost}` : `ws://${cleanHost}`;
+
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
@@ -67,7 +74,7 @@ export default function AgentDashboard() {
   // Load Neon history sessions list
   const loadHistoryLogs = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/api/history");
+      const res = await fetch(`${HTTP_BASE_URL}/api/history`);
       const data = await res.json();
       setHistory(data);
     } catch (err) {
@@ -87,7 +94,7 @@ export default function AgentDashboard() {
     }
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/history/${id}`, {
+      const res = await fetch(`${HTTP_BASE_URL}/api/history/${id}`, {
         method: "DELETE",
       });
       if (res.ok) {
@@ -114,7 +121,7 @@ export default function AgentDashboard() {
 
   const executeStreamPipeline = (payload: object) => {
     setIsRunning(true);
-    const socket = new WebSocket("ws://127.0.0.1:8000/ws/agent");
+    const socket = new WebSocket(`${WS_BASE_URL}/ws/agent`);
     socketRef.current = socket;
 
     socket.onopen = () => {
