@@ -1,0 +1,21 @@
+# ── BACKEND CORE IGNORES ──
+backend/.venv/
+backend/__pycache__/
+backend/*.pyc
+backend/.pytest_cache/
+
+# ── FRONTEND CORE IGNORES ──
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+frontend/.turbo/
+
+# ── ENVIRONMENT / SECURITY SECRETS ──
+.env
+backend/.env
+frontend/.env
+*.env.local
+
+# ── OPERATING SYSTEM JUNK ──
+.DS_Store
+Thumbs.db
