@@ -16,4 +16,4 @@ ENV PYTHONPATH=/app
 EXPOSE 8000
 
 # Run the FastAPI server using uvicorn via your main entry point
-CMD ["python","-m", "src/main.py"]
+CMD ["python","-m", "src.main"]
