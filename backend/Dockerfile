@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the backend source code
 COPY . .
 
+ENV PYTHONPATH=/app
 # Expose the dynamic port provided by the cloud host
 EXPOSE 8000
 
