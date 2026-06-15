@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
+import uvicorn
 
 from src.agent.graph import build_workflow_graph
 from src.agent.state import AgentState
