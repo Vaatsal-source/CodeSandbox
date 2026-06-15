@@ -7,7 +7,6 @@ from pydantic import BaseModel
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
-import uvicorn
 
 from src.agent.graph import build_workflow_graph
 from src.agent.state import AgentState
@@ -254,4 +253,5 @@ async def websocket_agent_endpoint(websocket: WebSocket):
 
 if __name__ == "__main__":
     import uvicorn
+    port = int(os.getenv("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
