@@ -11,6 +11,16 @@ interface TelemetryData {
   execution_time_ms: number;
 }
 
+interface HistoricalSession {
+  id: number;
+  task_description: string;
+  final_code: string;
+  explanation: string;
+  metrics: TelemetryData;
+  is_resolved: boolean;
+  created_at: string;
+}
+
 interface AgentUpdatePacket {
   event: "node_update" | "execution_complete";
   node?: string;
@@ -43,12 +53,64 @@ export default function AgentDashboard() {
     execution_time_ms: 0
   });
 
+  // Database Sessions State Sidebar Drawer
+  const [history, setHistory] = useState<HistoricalSession[]>([]);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
   const socketRef = useRef<WebSocket | null>(null);
   const terminalEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
+
+  // Load Neon history sessions list
+  const loadHistoryLogs = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/api/history");
+      const data = await res.json();
+      setHistory(data);
+    } catch (err) {
+      console.error("Failed to load historical session state array:", err);
+    }
+  };
+
+  useEffect(() => {
+    loadHistoryLogs();
+  }, []);
+
+  // Delete a historical session from both DB and local UI state
+  const deleteHistorySession = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation(); // Stop parent execution row loader from firing
+    if (!window.confirm("Are you sure you want to permanently delete this execution log from history?")) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/api/history/${id}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setHistory((prev) => prev.filter((session) => session.id !== id));
+        setLogs((prev) => [...prev, `🗑️ Permanently removed session log #${id} from historical tracking.`]);
+      } else {
+        console.error("Failed to delete session log from backend API.");
+      }
+    } catch (err) {
+      console.error("Network error deleting session log:", err);
+    }
+  };
+
+  const selectHistoricalSession = (session: HistoricalSession) => {
+    setTaskDescription(session.task_description);
+    setCurrentCode(session.final_code || "");
+    setExplanation(session.explanation || "");
+    setTelemetry(session.metrics);
+    setSandboxOutput({ stdout: "Loaded from cloud execution logs.", stderr: "", exitCode: session.is_resolved ? 0 : 1 });
+    setMetrics({ loops: 0, status: "Ready" });
+    setIsDrawerOpen(false);
+    setLogs([`📂 Restored historical session configuration record #${session.id} from Neon cloud database.`]);
+  };
 
   const executeStreamPipeline = (payload: object) => {
     setIsRunning(true);
@@ -94,9 +156,10 @@ export default function AgentDashboard() {
       }
 
       if (data.event === "execution_complete") {
-        setLogs((prev) => [...prev, "🏁 Execution cycle sequence completed."]);
+        setLogs((prev) => [...prev, "🏁 Execution cycle sequence completed. Saved to history."]);
         setMetrics((prev) => ({ ...prev, status: "Ready" }));
         setIsRunning(false);
+        loadHistoryLogs(); // Automatically reload list with newest record
         socket.close();
       }
     };
@@ -107,18 +170,30 @@ export default function AgentDashboard() {
     };
   };
 
-  const deployAgentFromScratch = () => {
+  const deployAgent = () => {
     if (!taskDescription.trim()) return;
-    setLogs(["🔌 Initializing full autonomous graph pipeline..."]);
-    setExplanation("");
-    setTrackedPackages([]);
-    setTelemetry({ input_tokens: 0, output_tokens: 0, total_cost_usd: 0.0, execution_time_ms: 0 });
-    setSandboxOutput({ stdout: "", stderr: "", exitCode: 0 });
-    
-    executeStreamPipeline({
-      action: "initial_task",
-      task_description: taskDescription
-    });
+
+    // Check if we are performing a smart iterative refinement or an absolute clean start
+    if (currentCode.trim()) {
+      setLogs((prev) => [...prev, "🔄 Initializing intelligent context refinement loop on top of existing code..."]);
+      executeStreamPipeline({
+        action: "iterative_refinement",
+        task_description: taskDescription,
+        code: currentCode,
+        required_packages: trackedPackages
+      });
+    } else {
+      setLogs(["🔌 Initializing full autonomous graph pipeline from scratch..."]);
+      setExplanation("");
+      setTrackedPackages([]);
+      setTelemetry({ input_tokens: 0, output_tokens: 0, total_cost_usd: 0.0, execution_time_ms: 0 });
+      setSandboxOutput({ stdout: "", stderr: "", exitCode: 0 });
+      
+      executeStreamPipeline({
+        action: "initial_task",
+        task_description: taskDescription
+      });
+    }
   };
 
   const evaluateHumanEdits = () => {
@@ -129,6 +204,17 @@ export default function AgentDashboard() {
       code: currentCode,
       required_packages: trackedPackages
     });
+  };
+
+  const clearWorkspace = () => {
+    setTaskDescription("");
+    setCurrentCode("");
+    setExplanation("");
+    setTrackedPackages([]);
+    setSandboxOutput({ stdout: "", stderr: "", exitCode: 0 });
+    setTelemetry({ input_tokens: 0, output_tokens: 0, total_cost_usd: 0.0, execution_time_ms: 0 });
+    setMetrics({ loops: 0, status: "Idle" });
+    setLogs(["✨ Workspace canvas cleared. Ready for new coding objective."]);
   };
 
   return (
@@ -162,31 +248,39 @@ export default function AgentDashboard() {
           </div>
           
           {/* Live Telemetry Monitors Grid */}
-          <div className="flex flex-wrap gap-3 text-xs w-full md:w-auto">
-            <div className="bg-slate-900/80 border border-slate-800/80 px-3 py-1.5 rounded-lg min-w-[100px]">
-              <span className="text-[10px] text-slate-400 block font-mono">LATENCY</span>
-              <span className="font-semibold text-emerald-400 font-mono text-sm">
-                {telemetry.execution_time_ms} <span className="text-[10px] text-slate-500">ms</span>
+          <div className="flex flex-wrap items-center gap-3 text-xs w-full md:w-auto">
+            
+            <button 
+              onClick={() => setIsDrawerOpen(true)}
+              className="bg-slate-950/80 hover:bg-slate-900 border border-slate-800 text-cyan-400 hover:border-cyan-500/50 px-4 py-2 rounded-lg font-semibold transition-all flex items-center gap-2 h-9 shadow-md"
+            >
+              📊 History Log Drawer ({history.length})
+            </button>
+
+            <div className="bg-slate-900/80 border border-slate-800/80 px-3 py-1 rounded-lg min-w-[90px] h-9 flex flex-col justify-center">
+              <span className="text-[9px] text-slate-400 block font-mono leading-none mb-0.5">LATENCY</span>
+              <span className="font-semibold text-emerald-400 font-mono text-xs leading-none">
+                {telemetry.execution_time_ms} <span className="text-[9px] text-slate-500">ms</span>
               </span>
             </div>
             
-            <div className="bg-slate-900/80 border border-slate-800/80 px-3 py-1.5 rounded-lg min-w-[120px]">
-              <span className="text-[10px] text-slate-400 block font-mono">TOTAL TOKENS</span>
-              <span className="font-semibold text-cyan-400 font-mono text-sm">
+            <div className="bg-slate-900/80 border border-slate-800/80 px-3 py-1 rounded-lg min-w-[100px] h-9 flex flex-col justify-center">
+              <span className="text-[9px] text-slate-400 block font-mono leading-none mb-0.5">TOTAL TOKENS</span>
+              <span className="font-semibold text-cyan-400 font-mono text-xs leading-none">
                 {telemetry.input_tokens + telemetry.output_tokens}
               </span>
             </div>
 
-            <div className="bg-slate-900/80 border border-slate-800/80 px-3 py-1.5 rounded-lg min-w-[110px]">
-              <span className="text-[10px] text-slate-400 block font-mono">SESSION COST</span>
-              <span className="font-semibold text-amber-400 font-mono text-sm">
+            <div className="bg-slate-900/80 border border-slate-800/80 px-3 py-1 rounded-lg min-w-[100px] h-9 flex flex-col justify-center">
+              <span className="text-[9px] text-slate-400 block font-mono leading-none mb-0.5">SESSION COST</span>
+              <span className="font-semibold text-amber-400 font-mono text-xs leading-none">
                 ${telemetry.total_cost_usd.toFixed(4)}
               </span>
             </div>
 
-            <div className="bg-slate-900/80 border border-slate-800/80 px-3 py-1.5 rounded-lg">
-              <span className="text-[10px] text-slate-400 block mb-0.5">STATUS</span>
-              <span className={`font-semibold text-xs ${isRunning ? "text-amber-400 animate-pulse" : "text-emerald-400"}`}>
+            <div className="bg-slate-900/80 border border-slate-800/80 px-3 py-1 rounded-lg h-9 flex flex-col justify-center min-w-[90px]">
+              <span className="text-[9px] text-slate-400 block leading-none mb-0.5">STATUS</span>
+              <span className={`font-semibold text-xs leading-none ${isRunning ? "text-amber-400 animate-pulse" : "text-emerald-400"}`}>
                 {metrics.status}
               </span>
             </div>
@@ -195,30 +289,45 @@ export default function AgentDashboard() {
 
         {/* Primary prompt entry layout */}
         <div className="mb-6 bg-slate-900/50 backdrop-blur-md border border-slate-800/80 p-4 rounded-xl shadow-xl">
-          <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-            Coding Objective / Buggy Requirements Prompt
-          </label>
-          <div className="flex gap-3">
-            <input
-              type="text"
-              className="flex-1 bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 text-slate-200"
-              placeholder="Describe an objective to watch the agent build it autonomously..."
+          <div className="flex justify-between items-center mb-2">
+            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              Coding Objective / Refinement Instructions Prompt
+            </label>
+            {currentCode.trim() && (
+              <button
+                onClick={clearWorkspace}
+                disabled={isRunning}
+                className="text-xs text-rose-400 hover:text-rose-300 transition-all underline cursor-pointer disabled:opacity-40"
+              >
+                Clear Entire Canvas (Fresh Start)
+              </button>
+            )}
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 items-end">
+            <textarea
+              rows={2}
+              className="w-full flex-1 bg-slate-950/80 border border-slate-800 rounded-lg p-3 text-sm focus:outline-none focus:border-emerald-500 text-slate-200 resize-none font-sans"
+              placeholder={currentCode.trim() ? "Type instructions to alter or improve the current generated code script..." : "Describe an objective to watch the agent build it autonomously..."}
               value={taskDescription}
               onChange={(e) => setTaskDescription(e.target.value)}
               disabled={isRunning}
             />
             <button
-              onClick={deployAgentFromScratch}
+              onClick={deployAgent}
               disabled={isRunning}
-              className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-slate-950 disabled:text-slate-500 font-bold px-6 py-2 rounded-lg text-sm transition-all shadow-md shadow-emerald-950/20"
+              className={`w-full sm:w-auto font-bold px-6 py-3 rounded-lg text-sm transition-all shadow-md h-[46px] whitespace-nowrap ${
+                currentCode.trim() 
+                  ? "bg-cyan-600 hover:bg-cyan-500 text-slate-950 shadow-cyan-950/20" 
+                  : "bg-emerald-600 hover:bg-emerald-500 text-slate-950 shadow-emerald-950/20"
+              } disabled:bg-slate-800 disabled:text-slate-500`}
             >
-              Deploy Agent
+              {currentCode.trim() ? "Refine Code Script" : "Deploy Agent"}
             </button>
           </div>
         </div>
 
         {/* Workspaces split layouts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-250px)]">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-270px)]">
           
           {/* Left Layout column */}
           <div className="flex flex-col gap-4 h-full overflow-hidden">
@@ -305,6 +414,70 @@ export default function AgentDashboard() {
 
         </div>
       </div>
+
+      {/* ── HISTORICAL SESSIONS DRAWER OVERLAY ── */}
+      {isDrawerOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-sm animate-fade-in">
+          <div className="fixed inset-0" onClick={() => setIsDrawerOpen(false)} />
+          <div className="relative w-full max-w-md h-screen bg-slate-900/90 backdrop-blur-md border-l border-slate-800 p-6 flex flex-col shadow-2xl z-10 text-slate-200">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-4 mb-4">
+              <div>
+                <h2 className="text-lg font-bold text-cyan-400">Execution History Logs</h2>
+                <p className="text-[11px] text-slate-400">Cached inside Neon PostgreSQL cluster</p>
+              </div>
+              <button 
+                onClick={() => setIsDrawerOpen(false)}
+                className="text-slate-400 hover:text-slate-100 font-bold bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-xs"
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+              {history.length === 0 ? (
+                <div className="text-center text-xs text-slate-500 mt-10 italic">No past sessions recorded in database.</div>
+              ) : (
+                history.map((session) => (
+                  <div 
+                    key={session.id}
+                    onClick={() => selectHistoricalSession(session)}
+                    className="group relative border border-slate-800/80 hover:border-cyan-500/40 bg-slate-950/50 hover:bg-slate-950/90 rounded-xl p-3 cursor-pointer transition-all shadow-md"
+                  >
+                    <div className="flex justify-between items-start gap-2 mb-1.5 pr-6">
+                      <span className={`text-[9px] font-bold font-mono px-2 py-0.5 rounded ${session.is_resolved ? "bg-emerald-950 text-emerald-400 border border-emerald-900" : "bg-rose-950 text-rose-400 border border-rose-900"}`}>
+                        {session.is_resolved ? "SUCCESS" : "FAILED"}
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        {new Date(session.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+
+                    {/* Integrated Delete Button Action */}
+                    <button
+                      onClick={(e) => deleteHistorySession(e, session.id)}
+                      className="absolute top-2.5 right-2.5 p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-900 rounded-md opacity-0 group-hover:opacity-100 transition-all"
+                      title="Delete log record"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+
+                    <p className="text-xs font-semibold text-slate-200 line-clamp-2 group-hover:text-cyan-400 transition-colors pr-4">
+                      {session.task_description}
+                    </p>
+                    <div className="mt-2 pt-2 border-t border-slate-900 flex justify-between text-[10px] font-mono text-slate-400">
+                      <span>Cost: <span className="text-amber-400">${session.metrics.total_cost_usd.toFixed(4)}</span></span>
+                      <span>Tokens: <span className="text-cyan-400">{session.metrics.input_tokens + session.metrics.output_tokens}</span></span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
